@@ -10,7 +10,7 @@ QR campaign and registration.
 
 ## Stack
 
-- Next.js 15 (App Router) + TypeScript, `output: "standalone"`
+- Next.js 15 (App Router) + TypeScript
 - Tailwind CSS 4, pure-CSS ambient animations (no WebGL, no client motion lib)
 - Prisma 6 + PostgreSQL (Supabase-compatible)
 - Zod 4 validation (shared client/server)
@@ -122,13 +122,16 @@ npm run db:seed             # first deploy only (idempotent anyway)
 npm run build
 ```
 
-Run one of:
+Start command (hPanel Node.js App / PM2): `npm start`. This runs
+`next start -p ${PORT:-3000}`, which binds to whatever port Hostinger
+assigns via the `PORT` env var (falls back to 3000 if unset — set hPanel's
+"Application URL"/proxy target to match).
 
-- **hPanel Node.js App / PM2**: start command `npm start` (next start, port
-  via `PORT` env).
-- **Standalone (smallest footprint)**: copy `.next/standalone` +
-  `.next/static` + `public` per Next.js docs and run
-  `node server.js` behind Hostinger's reverse proxy.
+> **Do not** add `output: "standalone"` to `next.config.ts` while using
+> `npm start` — Next.js 15 explicitly warns that `next start` does not work
+> with standalone output (it requires running `.next/standalone/server.js`
+> instead). Pick one deployment mode and keep `package.json`'s `start`
+> script in sync with it.
 
 Point `join.orbi-q.com` at the app, enable SSL in hPanel. Nothing in the app
 is Vercel-specific.

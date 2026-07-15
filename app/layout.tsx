@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Commissioner, Literata } from "next/font/google";
+import { getAppUrl } from "@/lib/urls/app-url";
 import "./globals.css";
 
 const commissioner = Commissioner({
@@ -16,7 +17,7 @@ const literata = Literata({
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL ?? "https://join.orbi-q.com"),
+  metadataBase: getAppUrl(),
   title: "ORBIQ Join",
   description: "Venue guest list registration by ORBIQ.",
   robots: { index: false, follow: false },
