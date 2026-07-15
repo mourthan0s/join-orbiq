@@ -1,0 +1,237 @@
+// ORBIQ Join Platform — central multi-venue database schema
+// One shared PostgreSQL database for all venues, locations, campaigns and registrations.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_DATABASE_URL")
+}
+
+enum VenueCategory {
+  RESTAURANT
+  BAR
+  CAFE
+  BEACH_BAR
+  CLUB
+  ROOFTOP
+  GASTROBAR
+  ALL_DAY
+}
+
+/// Visual variant keys — presets live in code (lib/theme/variants.ts),
+/// per-venue overrides live in the Venue theme columns below.
+enum VisualVariant {
+  DARK_NIGHTLIFE
+  ROOFTOP_ELEGANCE
+  COASTAL_SUMMER
+  FINE_DINING
+  URBAN_GASTROBAR
+  RELAXED_CAFE
+  PREMIUM_ALL_DAY
+}
+
+enum RegistrationStatus {
+  ACTIVE
+  UNSUBSCRIBED
+  DELETED // soft-delete for GDPR erasure workflow (PII columns are cleared)
+}
+
+enum ReviewCtaMode {
+  HIDDEN            // no verified review URL yet, or venue opted out
+  AFTER_SUCCESS     // show only on the success screen (default, protects conversion)
+  ALWAYS            // subtle secondary CTA on landing + prominent on success
+}
+
+model Venue {
+  id        String        @id @default(cuid())
+  slug      String        @unique
+  name      String
+  legalName String?
+  category  VenueCategory
+  /// Short description used for meta tags only — never rendered as a paragraph.
+  description String?
+
+  // ── Brand assets (paths under /public/venues/<slug>/ or absolute CDN URLs)
+  logoUrl            String?
+  logoDarkUrl        String?
+  heroImageUrl       String?
+  mobileHeroImageUrl String?
+
+  // ── External links (validated against the URL allowlist at seed/write time)
+  websiteUrl         String?
+  instagramUrl       String?
+  defaultRedirectUrl String?
+
+  // ── Theme
+  visualVariant   VisualVariant @default(PREMIUM_ALL_DAY)
+  primaryColor    String? // hex; falls back to variant preset
+  secondaryColor  String?
+  accentColor     String?
+  backgroundColor String?
+  textColor       String?
+  /// JSON theme overrides: overlay strength, gradient stops, focal point,
+  /// CTA style, typography treatment, card opacity, logo sizing,
+  /// content alignment, background animation toggle. Non-sensitive only.
+  themeConfig Json?
+
+  // ── Copy (per-locale strings resolved via translations; these are venue-specific)
+  headline       String?
+  headlineEn     String?
+  supportingText String?
+  supportingTextEn String?
+  benefitText    String?
+  benefitTextEn  String?
+
+  // ── Behaviour
+  defaultLocale        String        @default("el")
+  reviewCtaMode        ReviewCtaMode @default(AFTER_SUCCESS)
+  autoRedirectEnabled  Boolean       @default(false)
+  autoRedirectDelaySec Int           @default(8)
+
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  locations     VenueLocation[]
+  registrations Registration[]
+  qrCodes       QrCode[]
+
+  @@index([active])
+  @@map("venues")
+}
+
+model VenueLocation {
+  id      String @id @default(cuid())
+  venueId String
+  venue   Venue  @relation(fields: [venueId], references: [id], onDelete: Cascade)
+
+  /// URL segment under the venue slug, e.g. /nobell/galatsi
+  slug String
+  name String
+
+  address    String?
+  city       String?
+  postalCode String?
+  latitude   Float?
+  longitude  Float?
+  phone      String?
+
+  websiteUrl  String?
+  redirectUrl String?
+
+  // Optional per-location overrides of the venue-level branding
+  // (multi-location brands like Nobell have distinct Instagram accounts
+  // and photography per store). Null = inherit from the venue.
+  instagramUrl       String?
+  heroImageUrl       String?
+  mobileHeroImageUrl String?
+
+  // Google Business Profile data — must be verified, never guessed.
+  // NULL means "not yet provided"; the review CTA hides itself automatically.
+  googlePlaceId   String?
+  googleMapsUrl   String?
+  googleReviewUrl String?
+
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  registrations Registration[]
+  qrCodes       QrCode[]
+
+  @@unique([venueId, slug])
+  @@map("venue_locations")
+}
+
+model Registration {
+  id      String @id @default(cuid())
+  venueId String
+  venue   Venue  @relation(fields: [venueId], references: [id])
+
+  venueLocationId String?
+  venueLocation   VenueLocation? @relation(fields: [venueLocationId], references: [id])
+
+  fullName String
+  email    String
+  phone    String
+  birthday DateTime @db.Date
+
+  // Normalized copies used for duplicate detection — kept in sync by the
+  // registration service, never written directly from client input.
+  normalizedEmail String
+  normalizedPhone String
+
+  termsConsent     Boolean  @default(true)
+  marketingConsent Boolean  @default(false)
+  consentVersion   String
+  consentTimestamp DateTime @default(now())
+
+  // Attribution (sanitized, length-limited tracking values — never trusted HTML)
+  source   String?
+  campaign String?
+  qrCodeId String?
+  qrCode   QrCode? @relation(fields: [qrCodeId], references: [id])
+  locale   String  @default("el")
+
+  /// Client-generated key so a retried submit never creates a second row.
+  idempotencyKey String? @unique
+
+  status RegistrationStatus @default(ACTIVE)
+
+  /// Safe, non-sensitive metadata only (e.g. legacy import origin).
+  /// Never store raw request payloads, IPs or user agents here.
+  metadata Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Duplicate scope: one active registration per email per venue location
+  // (locationless venues use NULL, covered by the venue-level index below).
+  @@index([venueId, normalizedEmail])
+  @@index([venueId, venueLocationId, normalizedEmail])
+  @@index([venueId, createdAt])
+  @@map("registrations")
+}
+
+model QrCode {
+  id      String @id @default(cuid())
+  venueId String
+  venue   Venue  @relation(fields: [venueId], references: [id], onDelete: Cascade)
+
+  venueLocationId String?
+  venueLocation   VenueLocation? @relation(fields: [venueLocationId], references: [id])
+
+  /// Short printable code used in ?qr=<code>
+  code     String  @unique
+  name     String
+  source   String?
+  campaign String?
+
+  /// Optional destination override (must pass the URL allowlist).
+  destinationConfig Json?
+
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  registrations Registration[]
+
+  @@index([venueId])
+  @@map("qr_codes")
+}
+
+model ConsentVersion {
+  id         String   @id @default(cuid())
+  version    String
+  locale     String
+  text       String
+  activeFrom DateTime @default(now())
+  createdAt  DateTime @default(now())
+
+  @@unique([version, locale])
+  @@map("consent_versions")
+}
